@@ -1,0 +1,13 @@
+python-dotenv
+gradio
+groq
+chromadb
+langchain
+pymupdf 
+numpy
+fpdf
+pygments
+weasyprint
+langchain-community
+transformers
+sentence-transformers

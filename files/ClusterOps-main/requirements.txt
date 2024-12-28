@@ -1,0 +1,6 @@
+loguru
+ray
+GPUtil
+tenacity
+psutil
+pathos

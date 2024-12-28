@@ -1,0 +1,6 @@
+dataclasses
+pyyaml
+openpyxl
+loguru
+pydantic
+PyPDF2
