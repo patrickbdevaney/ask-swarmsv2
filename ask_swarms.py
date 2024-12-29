@@ -144,7 +144,7 @@ class RAGSystem:
         """Retrieve the most relevant document based on cosine similarity."""
         docs, distances = self.embedding_store.search_embedding(query_embedding)
         if docs:
-            return docs[0], distances[0]  # Return the most relevant document
+            return docs[0], distances[0][0]  # Return the most relevant document and the first distance value
         return None, None
 
     def chat_with_rag(self, user_input):
