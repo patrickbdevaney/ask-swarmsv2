@@ -1,11 +1,13 @@
 import os
 import json
+import chromadb
+import numpy as np
 from dotenv import load_dotenv
 import gradio as gr
 from groq import Groq
-import chromadb
-import numpy as np
-from langchain.chat_models import ChatOpenAI
+import torch
+from transformers import AutoTokenizer, AutoModel
+import logging
 
 # Load environment variables
 load_dotenv()
@@ -56,80 +58,135 @@ class GroqChatbot:
                 if self.current_key_index == 0:
                     return "All API keys have been exhausted. Please try again later."
 
-# Define the RAGSystem class as in the first code snippet
+    def text_to_embedding(self, text):
+        """Convert text to embedding using the current model."""
+        try:
+            # Load the model and tokenizer
+            tokenizer = AutoTokenizer.from_pretrained("NousResearch/Llama-3.2-1B")
+            model = AutoModel.from_pretrained("NousResearch/Llama-3.2-1B")
+
+            # Move model to GPU if available
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model = model.to(device)
+            model.eval()
+
+            # Ensure tokenizer has a padding token
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+
+            # Tokenize the text
+            encoded_input = tokenizer(
+                text,
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors='pt'
+            ).to(device)
+
+            # Generate embeddings
+            with torch.no_grad():
+                model_output = model(**encoded_input)
+                sentence_embeddings = model_output.last_hidden_state
+
+                # Mean pooling
+                attention_mask = encoded_input['attention_mask']
+                mask = attention_mask.unsqueeze(-1).expand(sentence_embeddings.size()).float()
+                masked_embeddings = sentence_embeddings * mask
+                summed = torch.sum(masked_embeddings, dim=1)
+                summed_mask = torch.clamp(torch.sum(attention_mask, dim=1).unsqueeze(-1), min=1e-9)
+                mean_pooled = (summed / summed_mask).squeeze()
+
+                # Move to CPU and convert to numpy
+                embedding = mean_pooled.cpu().numpy()
+
+                # Normalize the embedding vector
+                embedding = embedding / np.linalg.norm(embedding)
+
+                print(f"Generated embedding for text: {text}")
+                return embedding
+        except Exception as e:
+            print(f"Error generating embedding: {e}")
+            return None
+
+# Modify LocalEmbeddingStore to use ChromaDB
+class LocalEmbeddingStore:
+    def __init__(self, storage_dir="./chromadb_storage"):
+        self.client = chromadb.PersistentClient(path=storage_dir)  # Use ChromaDB client with persistent storage
+        self.collection_name = "chatbot_docs"  # Collection for storing embeddings
+        self.collection = self.client.get_or_create_collection(name=self.collection_name)
+
+    def add_embedding(self, doc_id, embedding, metadata):
+        """Add a document and its embedding to ChromaDB."""
+        self.collection.add(
+            documents=[doc_id],  # Document ID for identification
+            embeddings=[embedding],  # Embedding for the document
+            metadatas=[metadata],  # Optional metadata
+            ids=[doc_id]  # Same ID as document ID
+        )
+        print(f"Added embedding for document ID: {doc_id}")
+
+    def search_embedding(self, query_embedding, num_results=3):
+        """Search for the most relevant document based on embedding similarity."""
+        results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=num_results
+        )
+        print(f"Search results: {results}")
+        return results['documents'], results['distances']  # Returning both document IDs and distances
+
+# Modify RAGSystem to integrate ChromaDB search
 class RAGSystem:
-    def __init__(self, groq_client, doc_store):
+    def __init__(self, groq_client, embedding_store):
         self.groq_client = groq_client
-        self.doc_store = doc_store
+        self.embedding_store = embedding_store
 
     def get_most_relevant_document(self, query_embedding):
-        """Retrieve the most relevant document based on cosine similarity using the document store."""
-        # Query ChromaDB collection for most relevant documents
-        results = self.doc_store.query(query_embedding, n_results=1)
-        if results:
-            return results['documents'][0]
-        return None
+        """Retrieve the most relevant document based on cosine similarity."""
+        docs, distances = self.embedding_store.search_embedding(query_embedding)
+        if docs:
+            return docs[0], distances[0]  # Return the most relevant document
+        return None, None
 
     def chat_with_rag(self, user_input):
-        """Main function to handle the RAG process."""
-        # Query the embeddings from the Llama model or any other embedding model (already created)
-        query_embedding = self.doc_store.text_to_embedding(user_input)
-        if not query_embedding:
+        """Handle the RAG process."""
+        query_embedding = self.groq_client.text_to_embedding(user_input)
+        if query_embedding is None or query_embedding.size == 0:
             return "Failed to generate embeddings."
-        
-        context = self.get_most_relevant_document(query_embedding)
-        if not context:
+
+        context_document_id, similarity_score = self.get_most_relevant_document(query_embedding)
+        if not context_document_id:
             return "No relevant documents found."
 
-        prompt = f"Context:\n{context}\n\nUser: {user_input}\nAI:"
+        # Assuming metadata retrieval works
+        context_metadata = f"Metadata for {context_document_id}"  # Placeholder, implement as needed
+
+        prompt = f"""Context (similarity score {similarity_score:.2f}):
+{context_metadata}
+
+User: {user_input}
+AI:"""
         return self.groq_client.get_response(prompt)
 
-# Initialize Chroma client and load the existing collection
-client = chromadb.Client()
-collection = client.get_collection("chatbot_docs")  # Load the existing collection from ChromaDB
-
-# Initialize Groq chatbot
+# Initialize components
+embedding_store = LocalEmbeddingStore(storage_dir="./chromadb_storage")
 chatbot = GroqChatbot(api_keys=api_keys)
+rag_system = RAGSystem(groq_client=chatbot, embedding_store=embedding_store)
 
-# Initialize RAG system
-rag_system = RAGSystem(chatbot, collection)
-
-# Function to handle RAG process and generate chatbot response
+# Gradio UI
 def chat_ui(user_input, chat_history):
-    global conversation_history
-
-    # Get response from the RAG system
+    """Handle chat interactions and update history."""
+    if not user_input.strip():
+        return chat_history
     ai_response = rag_system.chat_with_rag(user_input)
-
-    # Update conversation history
-    chat_history.append(("User", user_input))
-    chat_history.append(("AI", ai_response))
-    conversation_history.append({"user": user_input, "ai": ai_response})
-
+    chat_history.append((user_input, ai_response))
     return chat_history
 
-# Conversation history
-conversation_history = []
-
-# Define Gradio interface functions
-def get_conversation_download():
-    return json.dumps(conversation_history, indent=4)
-
-# Gradio Layout
+# Gradio interface
 with gr.Blocks() as demo:
-    with gr.Row():
-        chat_history = gr.Chatbot(label="Groq Chatbot with RAG", elem_id="chatbox", height=600)
-    with gr.Row():
-        user_input = gr.Textbox(placeholder="Enter your prompt here...", lines=6, max_lines=10, elem_id="input-box")
-    with gr.Row():
-        submit_button = gr.Button("Submit")
-        download_button = gr.File(label="Download Conversation", file_name="conversation_history.json")
-
+    chat_history = gr.Chatbot(label="Groq Chatbot with RAG", elem_id="chatbox")
+    user_input = gr.Textbox(placeholder="Enter your prompt here...")
+    submit_button = gr.Button("Submit")
     submit_button.click(chat_ui, inputs=[user_input, chat_history], outputs=chat_history)
-    download_button.click(get_conversation_download, outputs=download_button)
 
-    # Trigger submit when Enter key is pressed in the input field
-    user_input.submit(chat_ui, inputs=[user_input, chat_history], outputs=chat_history)
-
-# Launch the Gradio app
-demo.launch()
+if __name__ == "__main__":
+    demo.launch()
