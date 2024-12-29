@@ -1,4 +1,4 @@
-# README: How to Convert Files to PDFs, Store Embeddings in ChromaDB, and Use a Groq-powered Chatbot with RAG
+# ASK-SWARMS: How to Convert Files to PDFs, Store Embeddings in ChromaDB, and Use a Groq-powered Chatbot with RAG
 
 This repository contains scripts and tools that allow you to convert text files into PDF files, store those PDFs as embeddings in ChromaDB, and create a Groq-powered chatbot using a Retrieval-Augmented Generation (RAG) system for querying relevant documents.
 
