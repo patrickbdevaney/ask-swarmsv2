@@ -1,0 +1,75 @@
+import requests
+
+#includes other endpoint calls like embed_text and add_document. not useful 
+#to serve to end users
+
+# Define the base URL for the FastAPI server (you can change this if the server runs on a different host or port)
+BASE_URL = "http://127.0.0.1:8000"
+
+def chat_with_api(user_input):
+    """Send a chat request to the /chat endpoint."""
+    url = f"{BASE_URL}/chat"
+    response = requests.post(url, json={"input_text": user_input})
+    
+    if response.status_code == 200:
+        return response.json()["response"]
+    else:
+        return f"Error: {response.status_code}, {response.text}"
+
+def embed_text(user_input):
+    """Send a request to the /embed endpoint."""
+    url = f"{BASE_URL}/embed"
+    response = requests.post(url, json={"input_text": user_input})
+    
+    if response.status_code == 200:
+        return response.json()["response"]
+    else:
+        return f"Error: {response.status_code}, {response.text}"
+
+def add_document(user_input):
+    """Send a request to the /add_document endpoint."""
+    url = f"{BASE_URL}/add_document"
+    response = requests.post(url, json={"input_text": user_input})
+    
+    if response.status_code == 200:
+        return response.json()["response"]
+    else:
+        return f"Error: {response.status_code}, {response.text}"
+
+def main():
+    print("Welcome to the chatbot interface!")
+    print("Type 'quit' to exit.")
+    
+    while True:
+        # Get user input
+        user_input = input("You: ")
+        
+        if user_input.lower() == "quit":
+            break
+        
+        # Ask the user what they want to do
+        action = input("Would you like to [1] Chat, [2] Embed Text, or [3] Add Document? (1/2/3): ")
+        
+        if action == "1":
+            # Chat with the chatbot
+            print("Chatting with the bot...")
+            response = chat_with_api(user_input)
+            print(f"Bot: {response}")
+        
+        elif action == "2":
+            # Embed the input text
+            print("Embedding the text...")
+            response = embed_text(user_input)
+            print(response)
+        
+        elif action == "3":
+            # Add a new document
+            print("Adding document to the database...")
+            response = add_document(user_input)
+            print(response)
+        
+        else:
+            print("Invalid choice. Please enter 1, 2, or 3.")
+
+if __name__ == "__main__":
+    main()
